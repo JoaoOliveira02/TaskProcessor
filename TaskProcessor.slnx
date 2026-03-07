@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="TaskProcessor.API/TaskProcessor.API.csproj" Id="ba861d76-6f5f-4b74-8383-d0b3c510c1d1" />
+  <Project Path="TaskProcessor.Application/TaskProcessor.Application.csproj" Id="c49dadcf-40a8-4c99-a6bf-25ce68939883" />
+  <Project Path="TaskProcessor.Domain/TaskProcessor.Domain.csproj" Id="853277bc-5652-4152-bad4-3508b9b4a2af" />
+  <Project Path="TaskProcessor.Infrastructure/TaskProcessor.Infrastructure.csproj" Id="dcc6abc1-3232-498d-bcee-db9869adae49" />
+  <Project Path="TaskProcessor.Worker/TaskProcessor.Worker.csproj" Id="0c4a1ad2-f429-4045-a6b2-40f947155ebd" />
+</Solution>
