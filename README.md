@@ -1,10 +1,10 @@
-# 🚀 TaskProcessor — Servico de Processamento de Tarefas
+# TaskProcessor — Servico de Processamento de Tarefas
 
 > Desafio tecnico desenvolvido com **C# / ASP.NET Core**, aplicando **DDD**, **Clean Architecture**, **CQRS**, **MongoDB** e **RabbitMQ**.
 
 ---
 
-## 📋 Indice
+## Indice
 
 - [Visao Geral](#visao-geral)
 - [Arquitetura](#arquitetura)
