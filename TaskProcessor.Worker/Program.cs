@@ -32,8 +32,13 @@ builder.Services.AddMassTransit(x =>
 
         cfg.ReceiveEndpoint("job-queue", e =>
         {
+            e.UseMessageRetry(r => r.Intervals(
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromSeconds(15)
+            ));
             e.ConfigureConsumer<JobConsumer>(ctx);
-            e.PrefetchCount = 3; // até 3 jobs simultâneos
+            e.PrefetchCount = 3;
         });
     });
 });

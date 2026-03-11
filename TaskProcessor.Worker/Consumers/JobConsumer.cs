@@ -1,4 +1,5 @@
-﻿using MassTransit;
+﻿using System.Diagnostics;
+using MassTransit;
 using TaskProcessor.Domain.Interfaces;
 using TaskProcessor.Infrastructure.Messaging;
 
@@ -10,20 +11,25 @@ public class JobConsumer(IJobRepository repository, ILogger<JobConsumer> logger)
 
     public async Task Consume(ConsumeContext<JobCreatedMessage> context)
     {
+        var stopwatch = Stopwatch.StartNew();
         var jobId = context.Message.JobId;
         var ct = context.CancellationToken;
+
+        logger.LogInformation("Iniciando consumo do job {JobId}", jobId);
 
         var job = await repository.GetByIdAsync(jobId, ct);
 
         if (job is null)
         {
-            logger.LogWarning("Job {JobId} não encontrado.", jobId);
+            logger.LogWarning("Job {JobId} não encontrado", jobId);
             return;
         }
 
+        logger.LogInformation("Iniciando processamento do job {JobId} do tipo {Type}", job.Id, job.Type);
+
         job.MarkAsProcessing();
         await repository.UpdateAsync(job, ct);
-        logger.LogInformation("Job {JobId} em processamento...", jobId);
+        logger.LogInformation("Job {JobId} marcado como {Status}", job.Id, job.Status);
 
         try
         {
@@ -35,7 +41,10 @@ public class JobConsumer(IJobRepository repository, ILogger<JobConsumer> logger)
 
             job.MarkAsDone();
             await repository.UpdateAsync(job, ct);
-            logger.LogInformation("Job {JobId} concluído com sucesso.", jobId);
+
+            stopwatch.Stop();
+            logger.LogInformation("Job {JobId} concluído com sucesso. Status: {Status}. Tempo de processamento: {ElapsedMs}ms",
+                job.Id, job.Status, stopwatch.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
@@ -45,15 +54,20 @@ public class JobConsumer(IJobRepository repository, ILogger<JobConsumer> logger)
             {
                 job.MarkAsFailed(ex.Message);
                 await repository.UpdateAsync(job, ct);
-                logger.LogWarning("Job {JobId} falhou. Tentativa {Retry}/{Max}. Reenfileirando...",
-                    jobId, job.RetryCount, MaxRetries);
 
-                throw; // MassTransit vai reenfileirar automaticamente
+                stopwatch.Stop();
+                logger.LogWarning("Job {JobId} do tipo {Type} falhou na tentativa {Retry}/{Max}. Reenfileirando... Tempo de processamento: {ElapsedMs}ms",
+                    job.Id, job.Type, job.RetryCount, MaxRetries, stopwatch.ElapsedMilliseconds);
+
+                throw;
             }
 
             job.MarkAsFailed(ex.Message);
             await repository.UpdateAsync(job, ct);
-            logger.LogError("Job {JobId} excedeu tentativas. Marcado como erro.", jobId);
+
+            stopwatch.Stop();
+            logger.LogError("Job {JobId} do tipo {Type} excedeu o limite de {Max} tentativas. Status: {Status}. Tempo de processamento: {ElapsedMs}ms",
+                job.Id, job.Type, MaxRetries, job.Status, stopwatch.ElapsedMilliseconds);
         }
     }
 }
