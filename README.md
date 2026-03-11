@@ -1,38 +1,41 @@
-# 🚀 TaskProcessor — Serviço de Processamento de Tarefas
+# 🚀 TaskProcessor — Servico de Processamento de Tarefas
 
-> Desafio técnico desenvolvido com **C# / ASP.NET Core**, aplicando **DDD**, **Clean Architecture**, **MongoDB** e **RabbitMQ**.
+> Desafio tecnico desenvolvido com **C# / ASP.NET Core**, aplicando **DDD**, **Clean Architecture**, **CQRS**, **MongoDB** e **RabbitMQ**.
 
 ---
 
-## 📋 Índice
+## 📋 Indice
 
-- [Visão Geral](#visão-geral)
+- [Visao Geral](#visao-geral)
 - [Arquitetura](#arquitetura)
   - [Clean Architecture](#clean-architecture)
   - [DDD — Domain-Driven Design](#ddd--domain-driven-design)
-  - [Por que DDD + Clean Architecture juntos?](#por-que-ddd--clean-architecture-juntos)
+  - [CQRS — Command Query Responsibility Segregation](#cqrs--command-query-responsibility-segregation)
+  - [Por que DDD + Clean Architecture + CQRS juntos?](#por-que-ddd--clean-architecture--cqrs-juntos)
 - [Tecnologias](#tecnologias)
   - [MongoDB — Por que NoSQL aqui?](#mongodb--por-que-nosql-aqui)
   - [RabbitMQ — Por que mensageria?](#rabbitmq--por-que-mensageria)
 - [Estrutura do Projeto](#estrutura-do-projeto)
-- [Fluxo da Aplicação](#fluxo-da-aplicação)
+- [Fluxo da Aplicacao](#fluxo-da-aplicacao)
 - [Endpoints da API](#endpoints-da-api)
 - [Como Rodar](#como-rodar)
-- [Variáveis de Ambiente](#variáveis-de-ambiente)
+- [Variaveis de Ambiente](#variaveis-de-ambiente)
 
 ---
 
-## Visão Geral
+## Visao Geral
 
-A aplicação expõe uma **API REST** para criação e consulta de tarefas (_jobs_). Cada tarefa é persistida no **MongoDB** e publicada em uma fila do **RabbitMQ**, onde **Workers** em background a consomem de forma assíncrona e concorrente.
+A aplicacao expoe uma **API REST** para criacao e consulta de tarefas (_jobs_). Cada tarefa e persistida no **MongoDB** e publicada em uma fila do **RabbitMQ**, onde **Workers** em background a consomem de forma assincrona e concorrente.
 
 **Funcionalidades:**
-- Criação de tarefas via API
-- Processamento assíncrono em background (Workers)
-- Controle de status: `Pendente → EmProcessamento → Concluido / Erro`
-- Sistema de re-tentativa com limite máximo configurável
-- Controle de concorrência entre múltiplos Workers
-- Containerização com Docker
+- Criacao de tarefas via API
+- Processamento assincrono em background (Workers)
+- Controle de status: `Pending -> InProcessing -> Completed / Error`
+- Sistema de re-tentativa com limite maximo configuravel (padrao: 3 tentativas)
+- Controle de concorrencia com ate 3 Workers simultaneos
+- Logs estruturados com tempo de processamento em cada etapa
+- Swagger documentado com exemplos de requisicao
+- Containerizacao completa com Docker
 
 ---
 
@@ -40,167 +43,178 @@ A aplicação expõe uma **API REST** para criação e consulta de tarefas (_job
 
 ### Clean Architecture
 
-A Clean Architecture organiza o código em **camadas concêntricas**, onde a regra é: **dependências sempre apontam para dentro**. A camada mais interna (Domain) não conhece nenhuma outra.
+A Clean Architecture organiza o codigo em **camadas concentricas**, onde a regra e: **dependencias sempre apontam para dentro**. A camada mais interna (Domain) nao conhece nenhuma outra.
 
 ```
 ┌──────────────────────────────────────┐
-│           Infrastructure             │  ← MongoDB, RabbitMQ, EF, etc.
+│           Infrastructure             │  <- MongoDB, RabbitMQ
 │  ┌────────────────────────────────┐  │
-│  │         Application            │  │  ← Casos de uso, DTOs, interfaces
+│  │         Application            │  │  <- Commands, CQRS, Queries
 │  │  ┌──────────────────────────┐  │  │
-│  │  │         Domain           │  │  │  ← Entidades, Value Objects, Regras
+│  │  │         Domain           │  │  │  <- Entidades, Enums, Interfaces
 │  │  └──────────────────────────┘  │  │
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
          ↑
-      API / Workers (ponto de entrada)
+      API / Worker (ponto de entrada)
 ```
 
 | Camada | Responsabilidade | Depende de |
 |---|---|---|
-| **Domain** | Entidades, regras de negócio, interfaces | Nada |
-| **Application** | Casos de uso (UseCases), DTOs, orquestração | Domain |
-| **Infrastructure** | MongoDB, RabbitMQ, repositórios concretos | Application + Domain |
+| **Domain** | Entidades, regras de negocio, interfaces | Nada |
+| **Application** | Casos de uso, CQRS, orquestracao | Domain |
+| **Infrastructure** | MongoDB, RabbitMQ, repositorios concretos | Application + Domain |
 | **API / Worker** | Controllers, Background Services | Application |
 
-> **Regra de ouro:** se você precisar trocar o MongoDB por PostgreSQL, só a camada de Infrastructure muda. O Domain e a Application nunca sabem qual banco está sendo usado.
+> **Regra de ouro:** se precisar trocar o MongoDB por PostgreSQL, so a camada de Infrastructure muda. O Domain e a Application nunca sabem qual banco esta sendo usado.
 
 ---
 
 ### DDD — Domain-Driven Design
 
-O DDD é uma **forma de pensar e modelar** o software centrada no domínio do negócio. Não é uma arquitetura, é uma filosofia de design.
+O DDD e uma **forma de pensar e modelar** o software centrada no dominio do negocio. Nao e uma arquitetura, e uma filosofia de design.
 
 **Conceitos aplicados neste projeto:**
 
 #### Entidade (_Entity_)
-Objeto com **identidade única** que persiste ao longo do tempo. No nosso caso: `Job`.
+Objeto com **identidade unica** que persiste ao longo do tempo. No nosso caso: `Job`.
 
 ```
 Job
- ├── Id (GUID)               ← identidade
- ├── Type (string)           ← tipo da tarefa
- ├── Payload (JSON)          ← dados para processamento
- ├── Status (enum)           ← estado atual
- ├── RetryCount (int)        ← controle de re-tentativas
- └── CreatedAt (DateTime)    ← auditoria
+ ├── Id (GUID)               <- identidade unica
+ ├── Type (string)           <- tipo da tarefa
+ ├── Payload (JSON)          <- dados para processamento
+ ├── Status (enum)           <- estado atual
+ ├── RetryCount (int)        <- controle de re-tentativas
+ ├── ErrorMessage (string?)  <- mensagem de erro se houver
+ └── CreatedAt (DateTime)    <- auditoria
 ```
 
-#### Value Object
-Objeto sem identidade própria, definido pelos seus **valores**. Exemplo: `JobStatus` como enum ou tipo fortemente tipado.
+A logica de negocio fica **dentro da entidade**, nao espalhada nos handlers:
 
-#### Repositório (_Repository_)
-Interface definida no **Domain** que abstrai o acesso a dados. A implementação concreta fica na Infrastructure.
+```csharp
+// Sem DDD — logica espalhada no handler
+job.Status = JobStatus.Completed;
+job.UpdatedAt = DateTime.UtcNow;
+
+// Com DDD — logica encapsulada na entidade
+job.MarkAsDone();
+```
+
+#### Repositorio (_Repository_)
+Interface definida no **Domain** que abstrai o acesso a dados. A implementacao concreta fica na Infrastructure.
 
 ```
-Domain/Interfaces/IJobRepository.cs    ← contrato (interface)
-Infrastructure/Repositories/JobRepository.cs  ← implementação com MongoDB
+Domain/Interfaces/IJobRepository.cs          <- contrato (interface)
+Infrastructure/Persistence/JobRepository.cs  <- implementacao com MongoDB
 ```
-
-#### Serviço de Domínio (_Domain Service_)
-Lógica de negócio que não pertence a uma entidade específica. Exemplo: regras de re-tentativa.
 
 #### Agregado (_Aggregate_)
-Um agrupamento de entidades/value objects tratado como **uma unidade de consistência**. Aqui, `Job` é o agregado raiz.
+`Job` e o agregado raiz — toda operacao passa por ele, garantindo consistencia.
 
 ---
 
-### Por que DDD + Clean Architecture juntos?
+### CQRS — Command Query Responsibility Segregation
 
-São complementares, não concorrentes:
+CQRS separa operacoes de **escrita** (Commands) de operacoes de **leitura** (Queries).
 
-- **DDD** responde *o quê modelar* — como o domínio do negócio deve ser representado
-- **Clean Architecture** responde *onde colocar* — como organizar as camadas e dependências
+```
+Commands -> modificam estado -> CreateJob, DeleteJob
+Queries  -> so leem dados   -> GetJob, GetAllJobs, GetJobsByStatus
+```
 
-Juntos garantem que o código seja **legível**, **testável** e **fácil de evoluir**.
+**Interfaces definidas na camada Application:**
+
+```csharp
+// Escrita
+ICommandHandler<TCommand, TResult>
+
+// Leitura
+IQueryHandler<TQuery, TResult>
+```
+
+**Beneficio pratico:** o controller depende de interfaces, nao de implementacoes concretas. Facil de testar, facil de evoluir.
+
+```csharp
+// Controller injeta pela interface — nao conhece a implementacao
+ICommandHandler<CreateJobCommand, Guid> createHandler
+IQueryHandler<GetJobQuery, Job?> getHandler
+```
+
+---
+
+### Por que DDD + Clean Architecture + CQRS juntos?
+
+Cada um resolve um problema diferente:
+
+| Padrao | Responde |
+|---|---|
+| **DDD** | *O que modelar* — como representar o dominio do negocio |
+| **Clean Architecture** | *Onde colocar* — como organizar camadas e dependencias |
+| **CQRS** | *Como separar* — escrita e leitura com responsabilidades distintas |
+
+Juntos garantem que o codigo seja **legivel**, **testavel** e **facil de evoluir**.
 
 ---
 
 ## Tecnologias
 
-| Tecnologia | Versão | Papel |
+| Tecnologia | Versao | Papel |
 |---|---|---|
 | C# / ASP.NET Core | .NET 8 | API e Workers |
-| MongoDB | 7.x | Persistência de tarefas |
+| MongoDB | 7.x | Persistencia de tarefas |
 | RabbitMQ | 3.x | Fila de mensagens |
-| MassTransit | 8.x | Abstração sobre RabbitMQ |
-| Docker + Compose | — | Containerização |
+| MassTransit | 8.2.5 | Abstracao sobre RabbitMQ |
+| Swashbuckle | — | Documentacao Swagger |
+| Docker + Compose | — | Containerizacao |
 
 ---
 
 ### MongoDB — Por que NoSQL aqui?
 
-MongoDB é um banco **orientado a documentos**. Cada registro é um documento JSON (internamente BSON).
+MongoDB e um banco **orientado a documentos**. Cada registro e um documento JSON (internamente BSON).
 
 **Por que faz sentido neste projeto:**
 
-- Cada `Job` carrega um campo `Payload` que é JSON livre — em SQL você teria que serializar como string ou criar tabelas dinâmicas. No MongoDB, você simplesmente armazena o objeto.
-- O schema pode evoluir sem migrations: se amanhã `EnviarEmail` ganhar um novo campo, documentos antigos continuam válidos.
-- Escala horizontalmente com facilidade para alto volume de tarefas.
-
-**Conceitos básicos do MongoDB:**
+- O campo `Payload` e um JSON livre — cada tipo de tarefa tem dados diferentes. Em SQL seria necessario serializar como string ou criar tabelas dinamicas.
+- O schema pode evoluir sem migrations: se `EnviarEmail` ganhar um novo campo, documentos antigos continuam validos.
+- Escala horizontalmente para alto volume de tarefas.
 
 ```
-Banco Relacional   →   MongoDB
-─────────────────────────────
-Database           →   Database
-Table              →   Collection
-Row                →   Document (JSON/BSON)
-Column             →   Field
-Primary Key        →   _id
-JOIN               →   Embed ou $lookup
-```
-
-**Exemplo de documento `Job` no MongoDB:**
-```json
-{
-  "_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "type": "EnviarEmail",
-  "payload": {
-    "to": "user@example.com",
-    "subject": "Bem-vindo!"
-  },
-  "status": "Pendente",
-  "retryCount": 0,
-  "createdAt": "2024-01-15T10:30:00Z"
-}
+Banco Relacional   ->   MongoDB
+────────────────────────────────
+Database           ->   Database
+Table              ->   Collection
+Row                ->   Document (JSON/BSON)
+Primary Key        ->   _id
+JOIN               ->   Embed ou $lookup
 ```
 
 ---
 
 ### RabbitMQ — Por que mensageria?
 
-RabbitMQ é um **message broker**: um intermediário que recebe mensagens de produtores (_publishers_) e entrega para consumidores (_consumers_).
+RabbitMQ e um **message broker**: intermediario que recebe mensagens de produtores e entrega para consumidores.
 
-**Por que não processar direto na API?**
+**Por que nao processar direto na API?**
 
-Se a API processasse a tarefa na mesma requisição HTTP:
+Se a API processasse a tarefa na mesma requisicao HTTP:
 - O cliente ficaria esperando (bloqueado)
-- Um pico de 1000 requisições travaria o servidor
+- Um pico de requisicoes travaria o servidor
 - Uma falha no processamento afetaria a resposta HTTP
 
 Com RabbitMQ:
 ```
-API (Producer)          RabbitMQ            Worker (Consumer)
-     │                     │                      │
-     │── publica Job ──────▶│                      │
-     │◀── 201 Created ──────│                      │
-     │                     │── entrega Job ───────▶│
-     │                     │                      │── processa...
-     │                     │                      │── atualiza status
+API (Producer)       RabbitMQ          Worker (Consumer)
+     │                  │                     │
+     │── publica Job ──▶│                     │
+     │◀── 201 Created ──│                     │
+     │                  │── entrega Job ──────▶│
+     │                  │                     │── processa...
+     │                  │                     │── atualiza status
 ```
 
-**Conceitos básicos:**
-
-| Conceito | O que é |
-|---|---|
-| **Exchange** | Recebe a mensagem e decide para qual fila enviar |
-| **Queue** | Fila onde as mensagens ficam aguardando |
-| **Binding** | Regra que liga Exchange à Queue |
-| **Consumer** | Quem lê e processa as mensagens da fila |
-| **Ack / Nack** | Confirmação de que a mensagem foi processada (ou não) |
-
-**MassTransit** é uma biblioteca .NET que abstrai o RabbitMQ, deixando o código agnóstico ao broker. Se quiser trocar por Azure Service Bus no futuro, só muda a configuração.
+**MassTransit** abstrai o RabbitMQ — se quiser trocar por Azure Service Bus no futuro, so muda a configuracao.
 
 ---
 
@@ -209,41 +223,45 @@ API (Producer)          RabbitMQ            Worker (Consumer)
 ```
 TaskProcessor/
 │
-├── src/
-│   ├── TaskProcessor.Domain/            # Camada de Domínio
-│   │   ├── Entities/
-│   │   │   └── Job.cs                   # Entidade principal
-│   │   ├── Enums/
-│   │   │   └── JobStatus.cs             # Status possíveis
-│   │   └── Interfaces/
-│   │       └── IJobRepository.cs        # Contrato do repositório
-│   │
-│   ├── TaskProcessor.Application/       # Camada de Aplicação
-│   │   ├── UseCases/
-│   │   │   ├── CreateJob/
-│   │   │   │   ├── CreateJobCommand.cs  # DTO de entrada
-│   │   │   │   └── CreateJobHandler.cs  # Caso de uso
-│   │   │   └── GetJob/
-│   │   │       └── GetJobHandler.cs
-│   │   └── Interfaces/
-│   │       └── IMessagePublisher.cs     # Contrato da fila
-│   │
-│   ├── TaskProcessor.Infrastructure/    # Camada de Infraestrutura
-│   │   ├── Persistence/
-│   │   │   ├── MongoDbContext.cs        # Configuração do MongoDB
-│   │   │   └── JobRepository.cs        # Implementação concreta
-│   │   └── Messaging/
-│   │       └── RabbitMqPublisher.cs     # Implementação da fila
-│   │
-│   ├── TaskProcessor.API/               # Ponto de entrada da API
-│   │   ├── Controllers/
-│   │   │   └── JobsController.cs
-│   │   └── Program.cs
-│   │
-│   └── TaskProcessor.Worker/            # Background Service (Consumer)
-│       ├── Consumers/
-│       │   └── JobConsumer.cs           # Processa mensagens do RabbitMQ
-│       └── Program.cs
+├── TaskProcessor.Domain/
+│   ├── Entities/
+│   │   └── Job.cs                      # Entidade principal com regras de negocio
+│   ├── Enums/
+│   │   └── JobStatus.cs                # Pending, InProcessing, Completed, Error
+│   └── Interfaces/
+│       ├── IJobRepository.cs           # Contrato do repositorio
+│       └── IMessagePublisher.cs        # Contrato da fila
+│
+├── TaskProcessor.Application/
+│   ├── CQRS/
+│   │   ├── ICommandHandler.cs          # Interface para handlers de escrita
+│   │   └── IQueryHandler.cs            # Interface para handlers de leitura
+│   ├── Commands/
+│   │   ├── CreateJobHandler.cs         # Cria um novo job
+│   │   └── DeleteJobHandler.cs         # Remove um job
+│   └── Queries/
+│       ├── GetJobHandler.cs            # Busca job por ID
+│       ├── GetAllJobsHandler.cs        # Lista todos os jobs
+│       └── GetJobsByStatusHandler.cs   # Filtra jobs por status
+│
+├── TaskProcessor.Infrastructure/
+│   ├── Persistence/
+│   │   ├── MongoDbContext.cs           # Configuracao do MongoDB
+│   │   └── JobRepository.cs           # Implementacao concreta
+│   └── Messaging/
+│       ├── JobCreatedMessage.cs        # Contrato da mensagem na fila
+│       └── MassTransitPublisher.cs     # Implementacao com MassTransit
+│
+├── TaskProcessor.API/
+│   ├── Controllers/
+│   │   └── JobsController.cs
+│   ├── Models/                         # DTOs de request e response
+│   └── Program.cs
+│
+├── TaskProcessor.Worker/
+│   ├── Consumers/
+│   │   └── JobConsumer.cs             # Consome mensagens do RabbitMQ
+│   └── Program.cs
 │
 ├── docker-compose.yml
 ├── Dockerfile
@@ -252,131 +270,198 @@ TaskProcessor/
 
 ---
 
-## Fluxo da Aplicação
+## Fluxo da Aplicacao
 
 ```
-1. Cliente faz POST /jobs
+1. Cliente faz POST /api/jobs
         ↓
 2. JobsController recebe o request
         ↓
 3. CreateJobHandler (Application)
-   ├── Cria entidade Job com status "Pendente"
+   ├── Cria entidade Job com status Pending
    ├── Salva no MongoDB via IJobRepository
    └── Publica mensagem no RabbitMQ via IMessagePublisher
         ↓
 4. API retorna 201 Created com o Id do Job
         ↓
 5. Worker consome a mensagem do RabbitMQ
-   ├── Atualiza status para "EmProcessamento" no MongoDB
+   ├── Atualiza status para InProcessing
    ├── Executa o processamento (simulado)
-   ├── Atualiza status para "Concluido"
-   └── Em caso de erro: incrementa RetryCount
-       ├── Se RetryCount < MaxRetries: republica na fila
-       └── Se RetryCount >= MaxRetries: status "Erro"
+   ├── Atualiza status para Completed
+   └── Em caso de erro:
+       ├── Incrementa RetryCount
+       ├── Se RetryCount < 3: reenfileira (aguarda 5s, 10s, 15s)
+       └── Se RetryCount >= 3: status Error
         ↓
-6. Cliente faz GET /jobs/{id} para consultar o status
+6. Cliente faz GET /api/jobs/{id} para consultar o status
 ```
 
 ---
 
 ## Endpoints da API
 
-### Criar Tarefa
+Acesse a documentacao interativa em `http://localhost:5000/swagger`
+
+---
+
+### Criar Tarefa — Fluxo de Sucesso
+
 ```http
 POST /api/jobs
 Content-Type: application/json
 
 {
   "type": "EnviarEmail",
-  "payload": {
-    "to": "user@example.com",
-    "subject": "Bem-vindo ao sistema"
-  }
+  "payload": "{\"to\": \"usuario@email.com\", \"subject\": \"Bem-vindo!\"}"
 }
 ```
 
 **Response `201 Created`:**
 ```json
 {
-  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "type": "EnviarEmail",
-  "status": "Pendente",
-  "createdAt": "2024-01-15T10:30:00Z"
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
 }
 ```
 
-### Consultar Status
-```http
-GET /api/jobs/{id}
-```
-
-**Response `200 OK`:**
+Apos alguns segundos, o GET retornara:
 ```json
 {
   "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "type": "EnviarEmail",
-  "status": "Concluido",
+  "status": "Completed",
   "retryCount": 0,
   "createdAt": "2024-01-15T10:30:00Z",
-  "updatedAt": "2024-01-15T10:30:05Z"
+  "updatedAt": "2024-01-15T10:30:05Z",
+  "errorMessage": null
 }
 ```
 
-**Status possíveis:** `Pendente` | `EmProcessamento` | `Concluido` | `Erro`
+---
+
+### Criar Tarefa — Fluxo de Erro com Retry
+
+Para testar o sistema de re-tentativas, use o tipo `ErroForcado`:
+
+```http
+POST /api/jobs
+Content-Type: application/json
+
+{
+  "type": "ErroForcado",
+  "payload": "{\"teste\": \"payload de erro forcado\"}"
+}
+```
+
+O Worker vai executar o seguinte fluxo:
+
+```
+Tentativa 1 -> falha -> aguarda 5s  -> reenfileira (RetryCount: 1)
+Tentativa 2 -> falha -> aguarda 10s -> reenfileira (RetryCount: 2)
+Tentativa 3 -> falha -> aguarda 15s -> reenfileira (RetryCount: 3)
+Tentativa 4 -> falha -> limite atingido -> status: Error
+```
+
+**Response final do GET:**
+```json
+{
+  "id": "...",
+  "type": "ErroForcado",
+  "status": "Error",
+  "retryCount": 3,
+  "errorMessage": "Erro simulado para teste!"
+}
+```
+
+> Voce pode acompanhar o processo em tempo real no **RabbitMQ Dashboard** em `http://localhost:15672` — va em **Queues and Streams** e observe o grafico da fila `job-queue`.
+
+---
+
+### Consultar Job por ID
+
+```http
+GET /api/jobs/{id}
+```
+
+---
+
+### Listar Todos os Jobs
+
+```http
+GET /api/jobs
+```
+
+---
+
+### Filtrar por Status
+
+```http
+GET /api/jobs/status/{status}
+```
+
+| Valor | Status |
+|---|---|
+| `0` | Pending |
+| `1` | InProcessing |
+| `2` | Completed |
+| `3` | Error |
+
+---
+
+### Deletar Job
+
+```http
+DELETE /api/jobs/{id}
+```
+
+**Response `204 No Content`** — job removido com sucesso.
 
 ---
 
 ## Como Rodar
 
-### Pré-requisitos
+### Pre-requisitos
 - [Docker](https://www.docker.com/) e [Docker Compose](https://docs.docker.com/compose/)
 
-### 1. Clone o repositório
+### 1. Clone o repositorio
 ```bash
-git clone https://github.com/seu-usuario/task-processor.git
-cd task-processor
+git clone https://github.com/JoaoOliveira02/TaskProcessor.git
+cd TaskProcessor
 ```
 
-### 2. Suba todos os serviços
+### 2. Suba todos os servicos
 ```bash
 docker-compose up --build
 ```
 
-Isso irá subir:
+Isso ira subir:
 - **API** em `http://localhost:5000`
 - **Worker** processando em background
 - **MongoDB** em `localhost:27017`
 - **RabbitMQ** em `localhost:5672` (Management UI: `http://localhost:15672`)
 
-### 3. Teste a API
-```bash
-# Criar uma tarefa
-curl -X POST http://localhost:5000/api/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"type": "EnviarEmail", "payload": {"to": "test@example.com"}}'
-
-# Consultar o status (substitua pelo ID retornado)
-curl http://localhost:5000/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6
+### 3. Acesse o Swagger
+```
+http://localhost:5000/swagger
 ```
 
-### Credenciais padrão
-| Serviço | URL | Usuário | Senha |
+### Credenciais padrao
+
+| Servico | URL | Usuario | Senha |
 |---|---|---|---|
+| Swagger | http://localhost:5000/swagger | — | — |
 | RabbitMQ Management | http://localhost:15672 | guest | guest |
 | MongoDB | localhost:27017 | — | — |
 
 ---
 
-## Variáveis de Ambiente
+## Variaveis de Ambiente
 
-Configuradas via `docker-compose.yml` ou `appsettings.json`:
-
-| Variável | Descrição | Padrão |
+| Variavel | Descricao | Padrao |
 |---|---|---|
-| `MongoDB__ConnectionString` | String de conexão do MongoDB | `mongodb://localhost:27017` |
+| `MongoDB__ConnectionString` | String de conexao do MongoDB | `mongodb://localhost:27017` |
 | `MongoDB__DatabaseName` | Nome do banco | `TaskProcessorDb` |
 | `RabbitMQ__Host` | Host do RabbitMQ | `localhost` |
-| `RabbitMQ__Username` | Usuário | `guest` |
+| `RabbitMQ__Username` | Usuario | `guest` |
 | `RabbitMQ__Password` | Senha | `guest` |
-| `Worker__MaxRetries` | Máximo de re-tentativas por job | `3` |
-| `Worker__ConcurrentWorkers` | Quantidade de consumers simultâneos | `3` |
+| `Worker__MaxRetries` | Maximo de re-tentativas por job | `3` |
+| `Worker__ConcurrentWorkers` | Quantidade de consumers simultaneos | `3` |
