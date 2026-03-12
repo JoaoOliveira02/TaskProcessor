@@ -63,7 +63,7 @@ A Clean Architecture organiza o codigo em **camadas concentricas**, onde a regra
 |---|---|---|
 | **Domain** | Entidades, regras de negocio, interfaces | Nada |
 | **Application** | Casos de uso, CQRS, orquestracao | Domain |
-| **Infrastructure** | MongoDB, RabbitMQ, repositorios concretos | Application + Domain |
+| **Infrastructure** | MongoDB, RabbitMQ, repositorios concretos | Domain |
 | **API / Worker** | Controllers, Background Services | Application |
 
 > **Regra de ouro:** se precisar trocar o MongoDB por PostgreSQL, so a camada de Infrastructure muda. O Domain e a Application nunca sabem qual banco esta sendo usado.
